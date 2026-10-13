@@ -1,0 +1,380 @@
+[
+  {
+    "usage": {
+      "tertiary": null,
+      "dataConfidence": "exact",
+      "identity": {
+        "accountEmail": "user@example.com",
+        "providerID": "codex",
+        "loginMethod": "pro"
+      },
+      "loginMethod": "pro",
+      "secondary": {
+        "windowMinutes": 10080,
+        "resetsAt": "2026-10-18T04:04:47Z",
+        "resetDescription": "Oct 18 at 12:04 PM",
+        "usedPercent": 100
+      },
+      "accountEmail": "user@example.com",
+      "primary": null,
+      "codexResetCredits": {
+        "updatedAt": "2026-10-13T04:56:09Z",
+        "credits": [
+          {
+            "reset_type": "codex_rate_limits",
+            "expires_at": "2026-10-22T20:21:35Z",
+            "status": "available",
+            "granted_at": "2026-09-22T20:21:35Z",
+            "id": "redacted",
+            "title": "完全重置",
+            "description": "感谢使用 Codex！你已获赠一次免费的速率限制重置机会。"
+          },
+          {
+            "reset_type": "codex_rate_limits",
+            "expires_at": "2026-10-29T18:44:18Z",
+            "status": "available",
+            "granted_at": "2026-09-29T18:44:18Z",
+            "id": "redacted",
+            "title": "完全重置",
+            "description": "感谢使用 Codex！你已获赠一次免费的速率限制重置机会。"
+          },
+          {
+            "reset_type": "codex_rate_limits",
+            "expires_at": "2026-11-06T23:17:38Z",
+            "status": "available",
+            "granted_at": "2026-10-07T23:17:38Z",
+            "id": "redacted",
+            "title": "完全重置",
+            "description": "感谢使用 Codex！你已获赠一次免费的速率限制重置机会。"
+          }
+        ],
+        "availableCount": 3
+      },
+      "updatedAt": "2026-10-13T04:56:09Z",
+      "providerCost": {
+        "balance": 33398.606308,
+        "balanceUpdatedAt": "2026-10-13T04:56:09Z",
+        "used": 0,
+        "limit": 0,
+        "period": "Extra usage",
+        "currencyCode": "Credits",
+        "updatedAt": "2026-10-13T04:56:09Z"
+      }
+    },
+    "credits": {
+      "updatedAt": "2026-10-13T04:56:09Z",
+      "balanceReadSucceeded": true,
+      "creditsAvailable": true,
+      "events": [],
+      "balanceIsWorkspace": false,
+      "remaining": 33398.606308
+    },
+    "source": "oauth",
+    "provider": "codex"
+  },
+  {
+    "error": {
+      "code": 1,
+      "kind": "provider",
+      "message": "Could not parse Claude usage: Claude CLI /usage returned a subscription notice without session quota data. Local cost and token history remain available."
+    },
+    "source": "auto",
+    "provider": "claude"
+  },
+  {
+    "error": {
+      "code": 1,
+      "kind": "provider",
+      "message": "No Cursor session found. If you use Safari, grant CodexBar Full Disk Access in System Settings ▸ Privacy & Security. Please log in to cursor.com in Safari, Chrome, Microsoft Edge, Brave, Arc, Dia, ChatGPT Atlas, Chromium, Helium, Vivaldi, Yandex Browser, Firefox, Firefox Beta, Firefox Developer Edition, Firefox Nightly, Zen, Chrome Beta, Chrome Canary, Arc Beta, Arc Canary, Brave Beta, Brave Nightly, Microsoft Edge Beta, Microsoft Edge Canary, or Comet. You can also sign in to Cursor from the CodexBar menu (Add / switch account)."
+    },
+    "source": "auto",
+    "provider": "cursor"
+  },
+  {
+    "usage": {
+      "tertiary": null,
+      "extraRateWindows": [
+        {
+          "id": "redacted",
+          "title": "Offline · 2 conversations",
+          "window": {
+            "usedPercent": 0
+          },
+          "usageKnown": false
+        }
+      ],
+      "identity": {
+        "providerID": "antigravity",
+        "loginMethod": "offline"
+      },
+      "loginMethod": "offline",
+      "secondary": null,
+      "primary": null,
+      "updatedAt": "2026-10-13T04:56:41Z"
+    },
+    "source": "offline",
+    "provider": "antigravity"
+  },
+  {
+    "pace": {
+      "primary": {
+        "stage": "farAhead",
+        "willLastToReset": false,
+        "etaSeconds": 1377,
+        "summary": "52% in deficit | Expected 24% used | Projected empty in 23m",
+        "deltaPercent": 52,
+        "expectedUsedPercent": 24
+      }
+    },
+    "usage": {
+      "tertiary": null,
+      "identity": {
+        "providerID": "zai",
+        "loginMethod": "pro"
+      },
+      "loginMethod": "pro",
+      "secondary": {
+        "windowMinutes": 10080,
+        "resetsAt": "2026-10-20T03:44:36Z",
+        "resetDescription": "1 week window",
+        "usedPercent": 15.166666666666668
+      },
+      "primary": {
+        "windowMinutes": 300,
+        "resetsAt": "2026-10-13T08:44:41Z",
+        "resetDescription": "5-hour",
+        "usedPercent": 75.83333333333333
+      },
+      "updatedAt": "2026-10-13T04:56:41Z",
+      "details": [
+        {
+          "title": "Quota details",
+          "rows": [
+            {
+              "label": "Credit quota",
+              "secondaryValue": "60000 limit · 50900 remaining",
+              "value": "15.2% used"
+            },
+            {
+              "label": "Session credit quota",
+              "secondaryValue": "12000 limit · 2900 remaining",
+              "value": "75.8% used"
+            },
+            {
+              "label": "Quota rate",
+              "secondaryValue": "peak in 1h 4m",
+              "value": "Off-peak"
+            },
+            {
+              "label": "Account balance",
+              "secondaryValue": "recharged ¥100.00 · granted ¥235.94 · spent ¥335.94",
+              "value": "¥0.00"
+            }
+          ]
+        },
+        {
+          "title": "Hourly tokens",
+          "chart": {
+            "title": "Hourly tokens",
+            "points": [
+              {
+                "label": "2026-10-12 00:00",
+                "value": 6362105
+              },
+              {
+                "label": "2026-10-12 04:00",
+                "value": 18547052
+              },
+              {
+                "label": "2026-10-12 10:00",
+                "value": 13630284
+              },
+              {
+                "label": "2026-10-12 11:00",
+                "value": 26316681
+              },
+              {
+                "label": "2026-10-12 12:00",
+                "value": 19867421
+              },
+              {
+                "label": "2026-10-12 13:00",
+                "value": 4427236
+              },
+              {
+                "label": "2026-10-12 14:00",
+                "value": 2126912
+              },
+              {
+                "label": "2026-10-12 15:00",
+                "value": 10176917
+              },
+              {
+                "label": "2026-10-12 16:00",
+                "value": 25959123
+              },
+              {
+                "label": "2026-10-12 17:00",
+                "value": 14408628
+              },
+              {
+                "label": "2026-10-12 18:00",
+                "value": 28187791
+              },
+              {
+                "label": "2026-10-12 21:00",
+                "value": 5175570
+              },
+              {
+                "label": "2026-10-12 22:00",
+                "value": 32526017
+              },
+              {
+                "label": "2026-10-12 23:00",
+                "value": 39654738
+              },
+              {
+                "label": "2026-10-13 00:00",
+                "value": 14962695
+              },
+              {
+                "label": "2026-10-13 01:00",
+                "value": 17232761
+              },
+              {
+                "label": "2026-10-13 02:00",
+                "value": 8315055
+              },
+              {
+                "label": "2026-10-13 09:00",
+                "value": 22442644
+              },
+              {
+                "label": "2026-10-13 10:00",
+                "value": 284256665
+              },
+              {
+                "label": "2026-10-13 11:00",
+                "value": 321554652
+              },
+              {
+                "label": "2026-10-13 12:00",
+                "value": 170903515
+              }
+            ],
+            "unit": "tokens",
+            "kind": "bars"
+          },
+          "rows": [
+            {
+              "label": "GLM-5.3-Flash",
+              "value": "1.09B"
+            }
+          ]
+        },
+        {
+          "title": "Daily tokens",
+          "chart": {
+            "title": "Daily tokens",
+            "points": [
+              {
+                "label": "2026-09-17",
+                "value": 283363427
+              },
+              {
+                "label": "2026-09-18",
+                "value": 348752877
+              },
+              {
+                "label": "2026-09-19",
+                "value": 149894244
+              },
+              {
+                "label": "2026-09-20",
+                "value": 262262177
+              },
+              {
+                "label": "2026-09-21",
+                "value": 85693098
+              },
+              {
+                "label": "2026-09-22",
+                "value": 85510739
+              },
+              {
+                "label": "2026-09-25",
+                "value": 22395
+              },
+              {
+                "label": "2026-09-27",
+                "value": 28674707
+              },
+              {
+                "label": "2026-09-28",
+                "value": 4091638
+              },
+              {
+                "label": "2026-09-30",
+                "value": 3881407
+              },
+              {
+                "label": "2026-10-01",
+                "value": 7971182
+              },
+              {
+                "label": "2026-10-02",
+                "value": 2002086
+              },
+              {
+                "label": "2026-10-03",
+                "value": 1399222
+              },
+              {
+                "label": "2026-10-05",
+                "value": 3892249
+              },
+              {
+                "label": "2026-10-08",
+                "value": 104064289
+              },
+              {
+                "label": "2026-10-09",
+                "value": 35264959
+              },
+              {
+                "label": "2026-10-10",
+                "value": 166504530
+              },
+              {
+                "label": "2026-10-11",
+                "value": 283074241
+              },
+              {
+                "label": "2026-10-12",
+                "value": 247366475
+              },
+              {
+                "label": "2026-10-13",
+                "value": 839667987
+              }
+            ],
+            "unit": "tokens",
+            "kind": "bars"
+          },
+          "rows": [
+            {
+              "label": "GLM-5.3-Flash",
+              "value": "2.56B"
+            },
+            {
+              "label": "GLM-5.3",
+              "value": "383M"
+            }
+          ]
+        }
+      ]
+    },
+    "source": "api",
+    "provider": "zai"
+  }
+]
