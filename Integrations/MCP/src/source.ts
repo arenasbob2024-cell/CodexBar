@@ -16,6 +16,8 @@ export const BINARY_CANDIDATES = [
 ];
 
 const MAX_STDOUT_BYTES = 20_000_000;
+/** Startup probes (roster, version) are quick local commands; a hung one must not outlive a host's start-up budget. */
+export const PROBE_TIMEOUT_SECONDS = 5;
 
 function isExecutable(path: string): boolean {
   try {
@@ -117,12 +119,17 @@ export function runCli(bin: string, args: string[], timeoutSeconds: number): Pro
         killProcessGroup(child);
       }
     });
+    // The CLI may leave descendants behind in its (detached) process group, e.g. a PTY-probed
+    // `claude`. When the leader exits, sweep the group; this also releases pipes they still hold,
+    // so `close` fires. process.kill(-pid) on a gone group is a harmless ESRCH.
+    child.on("exit", () => killProcessGroup(child));
     child.on("error", () =>
       finish({ timedOut, overflow, spawnError: true, exitCode: null, stdout: "" }),
     );
-    child.on("close", (code) =>
-      finish({ timedOut, overflow, spawnError: false, exitCode: code, stdout }),
-    );
+    child.on("close", (code) => {
+      killProcessGroup(child);
+      finish({ timedOut, overflow, spawnError: false, exitCode: code, stdout });
+    });
   });
 }
 
@@ -131,13 +138,21 @@ export function runCli(bin: string, args: string[], timeoutSeconds: number): Pro
 // ---------------------------------------------------------------------------
 
 export type UsageResult =
-  | { kind: "ok"; raw: RawEntry[] }
+  | { kind: "ok"; raw: RawEntry[]; exitCode?: number }
   | { kind: "timeout" }
   | { kind: "invalid_json" }
   | { kind: "cli_exit"; exitCode: number }
   | { kind: "spawn_error" }
   | { kind: "http_status"; status: number }
   | { kind: "http_error" };
+
+/**
+ * Exit codes 0-4 all carry a printed payload (DESIGN 3.4): 1 = some provider failed,
+ * 2/3/4 = the failure class of a provider (not installed / parse error / timeout), but the
+ * JSON array is still printed in full. So any parseable array on those codes is a normal result.
+ * Only empty/unparseable stdout, or other codes (64 usage error, ...), are service-level errors.
+ */
+const PAYLOAD_EXIT_CODES = new Set([0, 1, 2, 3, 4]);
 
 export async function fetchUsageCli(
   bin: string,
@@ -150,21 +165,22 @@ export async function fetchUsageCli(
   if (run.timedOut) return { kind: "timeout" };
   if (run.overflow) return { kind: "invalid_json" };
   if (run.spawnError) return { kind: "spawn_error" };
-  // exit 0 = all ok, 1 = some provider failed but stdout is still valid JSON.
-  if (run.exitCode === 0 || run.exitCode === 1) {
+  const exitCode = run.exitCode ?? -1;
+  if (PAYLOAD_EXIT_CODES.has(exitCode)) {
     try {
       const parsed: unknown = JSON.parse(run.stdout);
-      if (Array.isArray(parsed)) return { kind: "ok", raw: parsed as RawEntry[] };
+      if (Array.isArray(parsed)) return { kind: "ok", raw: parsed as RawEntry[], exitCode };
     } catch {
-      // fall through
+      // fall through: no usable payload
     }
-    return { kind: "invalid_json" };
+    // 0/1 with garbage output is a JSON problem; 2/3/4 with nothing printed is reported by code.
+    return exitCode === 0 || exitCode === 1 ? { kind: "invalid_json" } : { kind: "cli_exit", exitCode };
   }
-  return { kind: "cli_exit", exitCode: run.exitCode ?? -1 };
+  return { kind: "cli_exit", exitCode };
 }
 
 export async function fetchRosterCli(bin: string): Promise<RosterEntry[] | null> {
-  const run = await runCli(bin, ["config", "providers", "--format", "json"], 15);
+  const run = await runCli(bin, ["config", "providers", "--format", "json"], PROBE_TIMEOUT_SECONDS);
   if (run.timedOut || run.spawnError || run.exitCode !== 0) return null;
   try {
     return parseRoster(JSON.parse(run.stdout));
@@ -174,7 +190,7 @@ export async function fetchRosterCli(bin: string): Promise<RosterEntry[] | null>
 }
 
 export async function fetchCliVersion(bin: string): Promise<string | null> {
-  const run = await runCli(bin, ["--version"], 10);
+  const run = await runCli(bin, ["--version"], PROBE_TIMEOUT_SECONDS);
   if (run.timedOut || run.spawnError || run.exitCode !== 0) return null;
   const match = /(\d+\.\d+(?:\.\d+)?(?:[-+.\w]*)?)/.exec(run.stdout);
   return match?.[1] ?? null;

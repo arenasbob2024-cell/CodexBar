@@ -63,6 +63,28 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * Redact every string reachable from a value (objects, arrays, nested). Used at the projection
+ * exit so that data which never went through `normalizeSnapshot` of THIS version (an older cache
+ * file, an unknown legacy field) cannot carry an address into a response.
+ */
+export function redactDeep<T>(value: T): T {
+  if (typeof value === "string") return redactEmails(value) as T;
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item)) as T;
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) out[key] = redactDeep(item);
+    return out as T;
+  }
+  return value;
+}
+
+/** Non-empty string with any email-like substring replaced (DESIGN 5.3: all passthrough free text). */
+function safeText(value: unknown): string | undefined {
+  const text = nonEmptyString(value);
+  return text === undefined ? undefined : redactEmails(text);
+}
+
 /** Window label from windowMinutes; resetDescription is localized text and never parsed. */
 export function windowLabel(windowMinutes: number | undefined): string | undefined {
   if (windowMinutes === undefined) return undefined;
@@ -176,19 +198,19 @@ function parseDetails(value: unknown): DetailSection[] | undefined {
     for (const row of rawRows) {
       if (!row || typeof row !== "object") continue;
       const r = row as Record<string, unknown>;
-      const label = typeof r.label === "string" ? r.label : "";
-      const cell = typeof r.value === "string" ? r.value : "";
+      const label = typeof r.label === "string" ? redactEmails(r.label) : "";
+      const cell = typeof r.value === "string" ? redactEmails(r.value) : "";
       if (label === "" && cell === "") continue;
       const secondary =
         typeof r.secondaryValue === "string" && r.secondaryValue.length > 0
-          ? r.secondaryValue
+          ? redactEmails(r.secondaryValue)
           : undefined;
       rows.push(
         secondary !== undefined ? { label, value: cell, secondaryValue: secondary } : { label, value: cell },
       );
     }
     if (rows.length === 0) continue;
-    const title = nonEmptyString(record.title);
+    const title = safeText(record.title);
     sections.push({ ...(title !== undefined ? { title } : {}), rows });
   }
   return sections.length > 0 ? sections : undefined;
@@ -197,10 +219,10 @@ function parseDetails(value: unknown): DetailSection[] | undefined {
 function buildPace(entry: RawEntry, now: Date): ProviderPace | undefined {
   const primary = entry.pace?.primary;
   if (!primary || typeof primary !== "object") return undefined;
-  const summary = nonEmptyString(primary.summary);
+  const summary = safeText(primary.summary);
   if (summary === undefined) return undefined;
   const etaSeconds = finiteNumber(primary.etaSeconds);
-  const stage = nonEmptyString(primary.stage);
+  const stage = safeText(primary.stage);
   let projectedEmptyAt: string | undefined;
   if (etaSeconds !== undefined && etaSeconds > 0) {
     projectedEmptyAt = new Date(now.getTime() + etaSeconds * 1000).toISOString();
@@ -217,9 +239,9 @@ function buildCredits(usage: RawUsage | null | undefined): ProviderQuota["credit
   const cost = usage?.providerCost;
   if (!cost || typeof cost !== "object") return undefined;
   const balance = finiteNumber(cost.balance);
-  const unit = nonEmptyString(cost.currencyCode);
+  const unit = safeText(cost.currencyCode);
   if (balance === undefined || unit === undefined) return undefined;
-  const updatedAt = nonEmptyString(cost.updatedAt);
+  const updatedAt = safeText(cost.updatedAt);
   return { balance, unit, ...(updatedAt !== undefined ? { updatedAt } : {}) };
 }
 
@@ -253,7 +275,8 @@ function buildResetCredits(
     const ms = Date.parse(at);
     if (Number.isFinite(ms) && ms > nowMs) expires.push(ms);
   }
-  if (expires.length === 0) return undefined;
+  // The inventory exists but nothing is usable: an explicit zero, not an absent field (DESIGN 5.2).
+  if (expires.length === 0) return { available: 0 };
   return { available: expires.length, nextExpiresAt: new Date(Math.min(...expires)).toISOString() };
 }
 
@@ -272,7 +295,7 @@ function buildProvider(
   if (entry === undefined) {
     return {
       provider: rosterEntry.id,
-      displayName: rosterEntry.displayName,
+      displayName: redactEmails(rosterEntry.displayName),
       status: "error",
       windows: [],
       error: {
@@ -284,7 +307,7 @@ function buildProvider(
 
   const usage = entry.usage && typeof entry.usage === "object" ? entry.usage : null;
   const error = buildError(entry);
-  const providerSource = nonEmptyString(entry.source);
+  const providerSource = safeText(entry.source);
   let status: ProviderStatus;
   if (error !== undefined) {
     status = "error";
@@ -294,8 +317,8 @@ function buildProvider(
     status = "ok";
   }
 
-  const plan = nonEmptyString(usage?.loginMethod);
-  const updatedAt = nonEmptyString(usage?.updatedAt);
+  const plan = safeText(usage?.loginMethod);
+  const updatedAt = safeText(usage?.updatedAt);
   const accountEmail = nonEmptyString(usage?.identity?.accountEmail);
   const details = parseDetails(usage?.details);
   const pace = buildPace(entry, now);
@@ -304,7 +327,7 @@ function buildProvider(
 
   return {
     provider: rosterEntry.id,
-    displayName: rosterEntry.displayName,
+    displayName: redactEmails(rosterEntry.displayName),
     status,
     ...(providerSource !== undefined ? { source: providerSource } : {}),
     ...(plan !== undefined ? { plan } : {}),
@@ -362,25 +385,51 @@ export function normalizeSnapshot(
   });
 }
 
-/** Merge a single-provider snapshot (targeted `--provider` fetch) into a base. */
+/**
+ * Merge a single-provider snapshot (targeted `--provider` fetch) into an existing base.
+ * The snapshot-level `fetchedAt` is deliberately the BASE's: refreshing one provider must not make
+ * the other providers' older data look fresh. The refreshed provider carries its own `updatedAt`.
+ */
 export function mergeProviderSnapshot(
-  base: InternalSnapshot | null,
+  base: InternalSnapshot,
   freshSingle: InternalSnapshot,
   provider: string,
-  roster: RosterEntry[],
-  now: Date,
 ): InternalSnapshot {
   const fresh = freshSingle.providers.find((p) => p.provider === provider);
-  const skeleton = base?.providers ?? roster
-    .filter((r) => r.enabled !== false)
-    .map((r) => buildMissingProvider(r));
-  const providers = skeleton.map((p) => (p.provider === provider && fresh ? fresh : p));
+  const providers = base.providers.map((p) => (p.provider === provider && fresh ? fresh : p));
   return recomputeSnapshotLevels({
-    source: base?.source ?? freshSingle.source,
-    // fetchedAt = time of the last successful fetch; per-provider updatedAt stays as reported.
-    fetchedAt: now.toISOString(),
+    source: base.source,
+    fetchedAt: base.fetchedAt,
     providers,
-    enabledProviders: base?.enabledProviders ?? freshSingle.enabledProviders,
+    enabledProviders: base.enabledProviders,
+  });
+}
+
+/**
+ * Rebuild a (cached) snapshot against the CURRENT enabled roster: providers that are no longer
+ * enabled are dropped, newly enabled ones appear as `missing` until fetched, display names are
+ * refreshed. An empty roster is "unknown" (snapshot untouched) unless `opts.known` says the roster
+ * query succeeded, in which case everything is dropped.
+ */
+export function rebuildForRoster(
+  snapshot: InternalSnapshot,
+  roster: RosterEntry[],
+  opts: { known?: boolean } = {},
+): InternalSnapshot {
+  const enabled = roster.filter((r) => r.enabled !== false && typeof r.id === "string" && r.id.length > 0);
+  // `known` = the roster query succeeded, so an empty list really means "nothing is enabled".
+  // Without it an empty list means "roster not available" and the snapshot is left untouched.
+  if (enabled.length === 0 && opts.known !== true) return snapshot;
+  const byId = new Map(snapshot.providers.map((p) => [p.provider, p] as const));
+  const providers = enabled.map((r) => {
+    const existing = byId.get(r.id);
+    return existing ? { ...existing, displayName: redactEmails(r.displayName) } : buildMissingProvider(r);
+  });
+  return recomputeSnapshotLevels({
+    source: snapshot.source,
+    fetchedAt: snapshot.fetchedAt,
+    providers,
+    enabledProviders: enabled.map((r) => r.id),
   });
 }
 
@@ -428,13 +477,16 @@ export function projectSnapshot(
       details,
       ...rest
     } = p;
+    // DESIGN 5.3 (v1.2): the single exit for free text. Everything except the explicit,
+    // opt-in `identity.accountEmail` is redacted here, whatever produced the snapshot.
+    const accountEmail = typeof identity?.accountEmail === "string" ? identity.accountEmail : undefined;
     return {
-      ...rest,
-      windows,
+      ...redactDeep(rest),
+      windows: redactDeep(windows),
       ...(bindingWindow !== undefined ? { bindingWindow } : {}),
       ...(minRemainingPercent !== undefined ? { minRemainingPercent } : {}),
-      ...(opts.includeIdentity && identity !== undefined ? { identity } : {}),
-      ...(opts.includeDetails && details !== undefined ? { details } : {}),
+      ...(opts.includeIdentity && accountEmail !== undefined ? { identity: { accountEmail } } : {}),
+      ...(opts.includeDetails && details !== undefined ? { details: redactDeep(details) } : {}),
     };
   });
   const anyResetPassed = providers.some((p) => p.windows.some((w) => w.resetPassed === true));
@@ -446,8 +498,8 @@ export function projectSnapshot(
     ageSeconds: Number.isFinite(ageSeconds) ? ageSeconds : 0,
     stale: anyResetPassed,
     partial: snapshot.partial,
-    failedProviders: snapshot.failedProviders,
-    enabledProviders: snapshot.enabledProviders,
+    failedProviders: redactDeep(snapshot.failedProviders),
+    enabledProviders: redactDeep(snapshot.enabledProviders),
     providers,
   };
 }

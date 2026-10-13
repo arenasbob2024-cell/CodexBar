@@ -3,7 +3,16 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mapErrorCode, normalize, normalizeSnapshot, projectSnapshot, redactEmails } from "../src/normalize.js";
+import {
+  mapErrorCode,
+  mergeProviderSnapshot,
+  normalize,
+  normalizeSnapshot,
+  projectSnapshot,
+  rebuildForRoster,
+  redactDeep,
+  redactEmails,
+} from "../src/normalize.js";
 import type { RawEntry, RosterEntry } from "../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -285,4 +294,139 @@ test("window label mapping", () => {
   assert.equal(label(10080), "weekly");
   assert.equal(label(43200), "monthly");
   assert.equal(label(90), "90m");
+});
+
+// ---------------------------------------------------------------------------
+// Audit round 1
+// ---------------------------------------------------------------------------
+
+test("F6: every passthrough free-text field is email-redacted; includeIdentity stays the only email source", () => {
+  const mail = "leak.me@example.org";
+  const dirty = JSON.parse(JSON.stringify(fixture)) as RawEntry[];
+  const zai = dirty.find((e) => e.provider === "zai") as RawEntry;
+  const usage = zai.usage as NonNullable<RawEntry["usage"]>;
+  usage.loginMethod = `pro for ${mail}`;
+  usage.details = [
+    {
+      title: `Quota for ${mail}`,
+      rows: [
+        { label: `owner ${mail}`, value: `used by ${mail}`, secondaryValue: `contact ${mail}` },
+        { label: "Credit quota", value: "15.1% used" },
+      ],
+    },
+  ];
+  (zai.pace as { primary: { summary: string; stage: string } }).primary.summary = `deficit; ping ${mail}`;
+  (zai.pace as { primary: { summary: string; stage: string } }).primary.stage = `stage-${mail}`;
+  zai.source = `api:${mail}`;
+  usage.providerCost = { balance: 5, currencyCode: `USD ${mail}`, updatedAt: "2026-10-13T04:00:00Z" };
+
+  const roster: RosterEntry[] = ROSTER.map((r) => (r.id === "zai" ? { ...r, displayName: `z.ai ${mail}` } : r));
+  const noIdentity = normalize(dirty, roster, NOW, { includeDetails: true, includeIdentity: false });
+  const json = JSON.stringify(noIdentity);
+  assert.ok(!json.includes("@"), "no at-sign anywhere with includeDetails=true, includeIdentity=false");
+  const z = provider(noIdentity, "zai");
+  assert.equal(z.plan, "pro for <redacted>");
+  assert.equal(z.details?.[0]?.title, "Quota for <redacted>");
+  assert.equal(z.details?.[0]?.rows[0]?.value, "used by <redacted>");
+  assert.equal(z.details?.[0]?.rows[0]?.secondaryValue, "contact <redacted>");
+  assert.equal(z.pace?.summary, "deficit; ping <redacted>");
+
+  // The only place an address may appear is the explicit, opt-in identity field.
+  const withIdentity = normalize(dirty, roster, NOW, { includeDetails: true, includeIdentity: true });
+  const stripped = JSON.stringify(withIdentity).split("user@example.com").join("");
+  assert.ok(!stripped.includes("@"), "free text stays redacted even with includeIdentity=true");
+  assert.equal(provider(withIdentity, "codex").identity?.accountEmail, "user@example.com");
+});
+
+test("F8/F17: merge keeps the base fetchedAt and rebuildForRoster follows the current roster", () => {
+  const baseNow = new Date("2026-10-13T03:00:00Z");
+  const base = normalizeSnapshot(fixture, ROSTER, baseNow, { source: "cli" });
+  const single = normalizeSnapshot(
+    fixture,
+    ROSTER.filter((r) => r.id === "zai"),
+    NOW,
+    { source: "cli" },
+  );
+  const merged = mergeProviderSnapshot(base, single, "zai");
+  assert.equal(merged.fetchedAt, base.fetchedAt, "overall fetchedAt is the base's");
+  assert.deepEqual(merged.enabledProviders, base.enabledProviders);
+
+  const narrower = rebuildForRoster(merged, ROSTER.filter((r) => r.id !== "claude"));
+  assert.deepEqual(narrower.providers.map((p) => p.provider), ["codex", "cursor", "antigravity", "zai"]);
+  assert.deepEqual(narrower.enabledProviders, ["codex", "cursor", "antigravity", "zai"]);
+  assert.ok(!narrower.failedProviders.includes("claude"));
+  const wider = rebuildForRoster(merged, [...ROSTER, { id: "grok", displayName: "Grok", enabled: true }]);
+  assert.equal(wider.providers.at(-1)?.error?.code, "missing");
+  assert.equal(rebuildForRoster(merged, []), merged, "empty roster = unknown, untouched");
+});
+
+test("F22: legacy reset-credit list with nothing usable reports available=0 and no nextExpiresAt", () => {
+  const mk = (credits: unknown): RawEntry[] => [
+    {
+      provider: "codex",
+      source: "oauth",
+      usage: { primary: { usedPercent: 10, windowMinutes: 300 }, codexResetCredits: { credits } as never },
+    },
+  ];
+  const codex = (raw: RawEntry[]) => provider(normalize(raw, [ROSTER[0] as RosterEntry], NOW), "codex");
+
+  const allGone = codex(mk([
+    { status: "available", expires_at: "2026-10-01T00:00:00Z", id: "a" }, // expired
+    { status: "used", expires_at: "2026-12-01T00:00:00Z", id: "b" }, // already used
+  ]));
+  assert.deepEqual(allGone.resetCredits, { available: 0 });
+  assert.equal("nextExpiresAt" in (allGone.resetCredits ?? {}), false);
+
+  assert.deepEqual(codex(mk([])).resetCredits, { available: 0 }, "empty list = known zero");
+  assert.equal(codex([{ provider: "codex", source: "oauth", usage: { primary: { usedPercent: 1, windowMinutes: 300 } } }]).resetCredits, undefined, "no inventory at all stays omitted");
+  assert.equal(codex(mk(null)).resetCredits, undefined, "null inventory stays omitted");
+});
+
+// ---------------------------------------------------------------------------
+// Audit round 2
+// ---------------------------------------------------------------------------
+
+test("G1: projectSnapshot redacts free text that never went through normalizeSnapshot (legacy cache shape)", () => {
+  const mail = "legacy.person@example.org";
+  const internal = normalizeSnapshot(fixture, ROSTER, NOW, { source: "cli" });
+  // Simulate an older cache file: free text written without redaction, plus an unknown legacy field.
+  const zai = internal.providers.find((p) => p.provider === "zai") as (typeof internal.providers)[number];
+  zai.plan = `pro ${mail}`;
+  zai.source = `api ${mail}`;
+  zai.displayName = `z.ai ${mail}`;
+  zai.pace = { summary: `deficit ${mail}`, stage: `stage ${mail}` };
+  zai.credits = { balance: 1, unit: `U ${mail}` };
+  zai.error = { code: "provider", message: `boom ${mail}` };
+  zai.details = [{ title: `t ${mail}`, rows: [{ label: `l ${mail}`, value: `v ${mail}`, secondaryValue: `s ${mail}` }] }];
+  (zai as unknown as Record<string, unknown>).legacyNote = { text: `note ${mail}`, list: [`x ${mail}`] };
+  zai.windows[0] = { ...(zai.windows[0] as (typeof zai.windows)[number]), label: `5h ${mail}` };
+  internal.enabledProviders = [...internal.enabledProviders, `extra-${mail}`];
+
+  for (const opts of [
+    { includeIdentity: false, includeDetails: false },
+    { includeIdentity: false, includeDetails: true },
+  ]) {
+    const json = JSON.stringify(projectSnapshot(internal, NOW, opts));
+    assert.ok(!json.includes("@"), `no at-sign with ${JSON.stringify(opts)}`);
+  }
+  const withIdentity = JSON.stringify(projectSnapshot(internal, NOW, { includeIdentity: true, includeDetails: true }));
+  assert.equal(withIdentity.split("@").length - 1, 1, "exactly one address: the explicit identity field");
+  assert.ok(withIdentity.includes('"accountEmail":"user@example.com"'));
+});
+
+test("G1: redactDeep walks nested structures and leaves non-strings alone", () => {
+  const input = { a: "x@y.io", b: [1, null, { c: "p@q.dev z" }], d: 3, e: false, f: null };
+  assert.deepEqual(redactDeep(input), { a: "<redacted>", b: [1, null, { c: "<redacted> z" }], d: 3, e: false, f: null });
+});
+
+test("G3: rebuildForRoster treats an empty roster as unknown unless it is flagged as known", () => {
+  const snap = normalizeSnapshot(fixture, ROSTER, NOW, { source: "cli" });
+  assert.equal(rebuildForRoster(snap, []), snap, "unknown: untouched");
+  assert.equal(rebuildForRoster(snap, [], { known: false }), snap);
+  const cleared = rebuildForRoster(snap, [], { known: true });
+  assert.deepEqual(cleared.providers, []);
+  assert.deepEqual(cleared.enabledProviders, []);
+  assert.deepEqual(cleared.failedProviders, []);
+  assert.equal(cleared.partial, false);
+  assert.equal(cleared.fetchedAt, snap.fetchedAt);
 });

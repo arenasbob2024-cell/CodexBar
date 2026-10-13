@@ -1,6 +1,6 @@
 # CodexBar MCP Server 设计方案（v1.1，含红队补丁）
 
-状态：定稿，交 Pi 执行
+状态：v1.3.1（v1.2 改 §3.4 退出码、§5.3 脱敏；v1.3 加 §5.1 定向失败裁定；v1.3.1 澄清发起调用的 status 推导）
 作者：Claude（方案 / 审计）  执行：Pi  日期：2026-10-13
 
 ## 1. 目标
@@ -60,10 +60,12 @@ CodexBar 的 Claude provider 在 `auto` 源下会回落到 `claude` CLI 的 PTY 
 
 ### 3.4 退出码语义
 
-CLI 文档：任一 provider 失败即非零退出。因此：
-- exit 0 / 1 且 stdout 可解析为 JSON 数组 → 正常结果（1 只表示有 provider 失败）。
-- exit 2（binary not found）、3（parse error）、4（timeout）、64（usage）或 stdout 不可解析 → 服务级错误，
-  工具返回 `{ status: "fetch_failed", code: "cli_exit_<n>" | "invalid_json" }`，并保留上一份缓存标 stale。
+源码核实（CLIHelpers.swift `mapError`、CLIUsageCommand.swift）：**单个 provider 的失败类型决定退出码**（2=该 provider 的 CLI 未装，
+3=解析失败，4=超时），但 payload 仍然完整打印。因此退出码不能用来判断 stdout 是否可用：
+- **只要 stdout 可解析为 JSON 数组，无论退出码是 0/1/2/3/4，都按正常结果处理**，provider 级错误由数组里的 `error` 对象表达。
+- stdout 为空或不可解析（真正的二进制缺失、参数错误 64、被我们的硬超时杀掉）→ 服务级错误，
+  工具返回 `{ status: "fetch_failed", code: "cli_exit_<n>" | "invalid_json" | "timeout" }`，并保留上一份缓存标 stale。
+- serve 模式同理：HTTP 200 以外（含冷启动 504）→ 服务级错误并保留缓存。
 
 ## 4. MCP 工具
 
@@ -139,6 +141,11 @@ interface QuotaWindow {
 - `source === "offline"` → `offline`，无论 usage 里有什么。
 - 否则 `ok`。
 - 单个 provider 失败只影响它自己。
+- **定向刷新失败（v1.3 裁定，依据 REVERIFY-1 N6）**：按状态记录，不按"是否送达"记录。
+  1. 对 provider X 的定向刷新失败后，记为 X 的待清除失败，直到一次覆盖 X 的成功刷新（定向或全量），或采用了更新的共享快照，才清除。
+  2. 此后每个响应里，X 的表现与全量抓取中某个 provider 失败完全一致：`X.status = "error"`、带 `error.code`、保留最后一次已知的 windows；`partial = true`；`failedProviders` 含 X。
+  3. 快照级的 `status`、`stale`、`error` 不受这条记录影响，仍只由数据年龄和全量抓取的成败决定。唯一例外：**发起这次失败定向刷新的那一次调用**，若在等待期内拿到了失败结果，其响应 `stale = true`，表示"你要的新数据没拿到"。
+     该响应的 `status` 仍按全局推导规则由 stale 得出（`fetch_failed` 优先，其次 stale 为真则 `"stale"`，否则 `"ok"`），即 `ok` 变为 `stale`，`fetch_failed` 不变；`error` 不变。（v1.3.1 澄清，依据 REVERIFY-2 D2：例外只改 stale 这一个输入，status 是推导结果，不是第二处例外。）
 
 ### 5.2 Codex 免费重置额度（两种 CLI 形状）
 - 0.74.x：顶层 `resetCredits { available, nextExpiresAt }` → 直接用。
@@ -148,7 +155,8 @@ interface QuotaWindow {
 
 ### 5.3 身份剥离
 默认删除：`accountEmail`、`identity.accountEmail`、`credits.events`、任何 `id` / `accountId` 字段、
-`openaiDashboard` 整块。错误文本里形如邮箱的子串替换为 `<redacted>`。
+`openaiDashboard` 整块。**所有透传的自由文本**（error.message、pace.summary、plan、details 的 title/label/value/secondaryValue）
+里形如邮箱的子串替换为 `<redacted>`，`includeDetails=true` 也不例外；只有 `includeIdentity=true` 时才输出 `identity.accountEmail`。
 
 ## 6. 工程约定
 
